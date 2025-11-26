@@ -1,0 +1,7 @@
+{
+  "name": "Copy of VibeCoder Academy",
+  "description": "A gamified educational platform for kids to learn Python and AI prompting (Vibe Coding) through interactive missions.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
