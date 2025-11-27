@@ -1,3 +1,4 @@
+// ... (imports and helper functions remain the same) ...
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { Level, LevelStep, Language } from "../types";
 
@@ -242,23 +243,44 @@ export const generateTutorResponse = async (
   }
 };
 
+// New simplified drawing command schema
+const drawingCommandSchema: Schema = {
+    type: Type.OBJECT,
+    properties: {
+        type: { type: Type.STRING, description: "Type of drawing command: 'fill', 'circle', 'rect', 'text', 'clear'" },
+        color: { type: Type.STRING, description: "Color in HEX or RGB format, e.g. '#000000' or '(0, 0, 255)'" },
+        x: { type: Type.NUMBER },
+        y: { type: Type.NUMBER },
+        radius: { type: Type.NUMBER },
+        width: { type: Type.NUMBER },
+        height: { type: Type.NUMBER },
+        text: { type: Type.STRING }
+    },
+    required: ["type"]
+};
+
 const executionSchema: Schema = {
     type: Type.OBJECT,
     properties: {
         consoleOutput: {
             type: Type.STRING,
-            description: "The simulated stdout/stderr output of the code. If successful, show standard success messages (e.g., 'pygame 2.5.0 (SDL 2.28.0, python 3.11) Hello from the pygame community.'). If error, show Python error trace."
+            description: "The simulated stdout/stderr output of the code. If syntax error, return Python error trace."
         },
         isSuccess: {
             type: Type.BOOLEAN,
-            description: "True if the code runs without syntax errors AND accomplishes the 'Expected Action'."
+            description: "True if the code runs without SYNTAX errors (Runtime success). Logic errors (e.g. wrong color) are still considered Success here."
         },
-        visualAction: {
-            type: Type.STRING,
-            description: "The internal action key to trigger visual update if success."
+        isObjectiveMet: {
+            type: Type.BOOLEAN,
+            description: "True ONLY if the code achieves the specific Level Objective (e.g. filled black specifically)."
+        },
+        drawingCommands: {
+            type: Type.ARRAY,
+            description: "List of drawing commands inferred from the code execution.",
+            items: drawingCommandSchema
         }
     },
-    required: ["consoleOutput", "isSuccess"]
+    required: ["consoleOutput", "isSuccess", "isObjectiveMet", "drawingCommands"]
 }
 
 export const runPythonCode = async (
@@ -269,31 +291,36 @@ export const runPythonCode = async (
     const langName = language === 'zh' ? 'Chinese (Simplified)' : 'English';
 
     const systemInstruction = `
-        You are a Python Interpreter and Game Logic Checker.
+        You are a Python Interpreter and Game Logic Simulator (Pygame).
         
         Task:
         1. Analyze the provided Python code.
-        2. Check for syntax errors.
-        3. Check if the code satisfies the Current Objective: "${currentStep.instruction}".
-        4. The expected logic should roughly match: "${currentStep.pythonSnippet}".
-        5. Return the simulated terminal output.
+        2. Check for Python SYNTAX errors.
+        3. Simulate the code execution and state changes.
+        4. Compare the result with the Current Objective: "${currentStep.instruction}" (Expected Action: ${currentStep.expectedAction}).
+        
+        Output Requirements:
+        - consoleOutput: Simulated terminal output. If success: "Process finished with exit code 0." or custom print output. If error: Standard Python error traceback.
+        - isSuccess: true if code has NO syntax/runtime errors. false if it crashes.
+        - isObjectiveMet: true if code fulfills the specific instruction (e.g. correct color/shape).
+        - drawingCommands: Extract ALL visual operations from the code into a JSON command list.
+          - Supported types: 'fill', 'circle', 'rect', 'text', 'clear'
+          - CRITICAL: For 'fill' commands, you MUST extract the RGB tuple from screen.fill() and convert it to HEX format.
+          - Color conversion: RGB tuple (r, g, b) -> HEX format "#RRGGBB" where each component is zero-padded to 2 hex digits.
+          - Examples: 
+            * screen.fill((0, 0, 0)) -> {type: "fill", color: "#000000"}
+            * screen.fill((255, 0, 0)) -> {type: "fill", color: "#FF0000"}
+            * screen.fill((1, 0, 1)) -> {type: "fill", color: "#010001"} (very dark purple)
+            * screen.fill((0, 0, 255)) -> {type: "fill", color: "#0000FF"}
+          - Even if the objective is missed (e.g. user filled Blue instead of Black), output the 'fill' command with the ACTUAL color used from the code.
+          - ALWAYS include a 'fill' command if screen.fill() is called, even if the color is wrong.
+          
+        IMPORTANT: 
+        - When user calls screen.fill((0,0,255)), you MUST return {type: "fill", color: "#0000FF"}.
+        - When user calls screen.fill((255,0,0)), you MUST return {type: "fill", color: "#FF0000"}.
+        - Do not default to black if the user specified a valid color.
         
         Output Language for Console Logs: ${langName} (for custom messages), but keep standard Python errors in English.
-        
-        If successful:
-        - consoleOutput: "Process started...\n> Loading assets...\n> Screen initialized.\n> Code executed successfully."
-        - isSuccess: true
-        - visualAction: "${currentStep.expectedAction}"
-        
-        If logic matches but code is messy, it's still a success.
-        
-        If syntax error:
-        - consoleOutput: "File 'main.py', line X\n  SyntaxError: invalid syntax"
-        - isSuccess: false
-        
-        If code runs but doesn't meet objective (e.g. user defined 'red' instead of 'blue'):
-        - consoleOutput: "Process finished with exit code 0.\n[System]: Objective not met. Expected: ${currentStep.expectedAction}"
-        - isSuccess: false
     `;
 
     try {
@@ -312,7 +339,9 @@ export const runPythonCode = async (
     } catch (error) {
         return {
             consoleOutput: "Runtime Error: Connection to interpreter lost.",
-            isSuccess: false
+            isSuccess: false,
+            isObjectiveMet: false,
+            drawingCommands: []
         };
     }
 }

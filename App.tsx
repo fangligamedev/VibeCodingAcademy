@@ -22,7 +22,7 @@ export default function App() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [code, setCode] = useState(''); // Replaced generatedCode with editable code
-  const [visualState, setVisualState] = useState<string[]>([]);
+  const [visualState, setVisualState] = useState<any[]>([]); // Updated type for drawing commands
   const [isLevelFinished, setIsLevelFinished] = useState(false);
   
   // Guide Focus State: 'INPUT' | 'RUN' | 'FINISH'
@@ -177,50 +177,81 @@ export default function App() {
         
         setConsoleOutput(result.consoleOutput);
 
+        // Check for successful execution (regardless of objective)
         if (result.isSuccess) {
-            // Visual Update
-            if (result.visualAction) {
-                setVisualState(prev => [...prev, result.visualAction!]);
+            // Update Visuals with dynamic drawing commands
+            console.log('[App] Execution result:', result);
+            console.log('[App] Drawing commands:', result.drawingCommands);
+            if (result.drawingCommands && result.drawingCommands.length > 0) {
+                setVisualState(prev => {
+                    const newState = [...prev, result.drawingCommands];
+                    console.log('[App] Updated visualState:', newState);
+                    return newState;
+                });
+            } else {
+                console.warn('[App] No drawing commands received from LLM');
             }
-            
-            // Advance Step Logic
-            if (currentStepIndex < currentLevel.steps.length - 1) {
-                setCurrentStepIndex(prev => prev + 1);
-                // After running successfully, user needs to input next command
-                setGuideFocus('INPUT'); 
-                
-                setTimeout(() => {
-                    const nextStep = currentLevel.steps[currentStepIndex + 1];
-                    const nextMsgText = `${t.executionSuccess}! ${t.nextStep} ${nextStep.instruction}`;
-                    const nextMsg: ChatMessage = {
+
+            // Now check if the OBJECTIVE was met
+            if (result.isObjectiveMet) {
+                // Advance Step Logic
+                if (currentStepIndex < currentLevel.steps.length - 1) {
+                    setCurrentStepIndex(prev => prev + 1);
+                    setGuideFocus('INPUT'); 
+                    
+                    setTimeout(() => {
+                        const nextStep = currentLevel.steps[currentStepIndex + 1];
+                        const nextMsgText = `${t.executionSuccess}! ${t.nextStep} ${nextStep.instruction}`;
+                        const nextMsg: ChatMessage = {
+                            id: Date.now().toString(),
+                            role: 'model',
+                            text: nextMsgText
+                        };
+                        setChatHistory(prev => [...prev, nextMsg]);
+                        speakText(nextMsgText);
+                    }, 1000);
+                } else {
+                    setIsLevelFinished(true);
+                    setGuideFocus('FINISH'); // Focus on finish button
+                    const finishMsg: ChatMessage = {
                         id: Date.now().toString(),
                         role: 'model',
-                        text: nextMsgText
+                        text: t.allStepsDone
                     };
-                    setChatHistory(prev => [...prev, nextMsg]);
-                    speakText(nextMsgText);
-                }, 1000);
+                    setChatHistory(prev => [...prev, finishMsg]);
+                    speakText(t.allStepsDone);
+                }
             } else {
-                setIsLevelFinished(true);
-                setGuideFocus('FINISH'); // Focus on finish button
-                const finishMsg: ChatMessage = {
+                // Execution was successful (no syntax error), but objective MISSED.
+                // We still updated the visual above, so the user sees what they did (e.g. Blue screen).
+                // Now we need to give feedback.
+                
+                // We can use explainPythonError or just a custom message.
+                // Let's ask Gemini to explain why the objective wasn't met based on the output
+                const explanation = await explainPythonError(code, 
+                    result.consoleOutput + `\n[System]: Code ran successfully but missed the objective. Expected: ${step.expectedAction}`, 
+                    language
+                );
+                
+                setGuideFocus('INPUT');
+                const errorMsg: ChatMessage = {
                     id: Date.now().toString(),
                     role: 'model',
-                    text: t.allStepsDone
+                    text: explanation || t.errorDetected 
                 };
-                setChatHistory(prev => [...prev, finishMsg]);
-                speakText(t.allStepsDone);
+                setChatHistory(prev => [...prev, errorMsg]);
+                speakText(explanation || t.errorDetected);
             }
+
         } else {
-            // Execution Failed logic
-            // Call AI to explain the error
+            // Syntax/Runtime Error
             const explanation = await explainPythonError(code, result.consoleOutput, language);
             
-            setGuideFocus('INPUT'); // Return focus to input/editor to fix it
+            setGuideFocus('INPUT');
             const errorMsg: ChatMessage = {
                 id: Date.now().toString(),
                 role: 'model',
-                text: explanation || t.errorDetected // Use AI explanation or fallback
+                text: explanation || t.errorDetected
             };
             setChatHistory(prev => [...prev, errorMsg]);
             speakText(explanation || t.errorDetected);
@@ -236,12 +267,6 @@ export default function App() {
   const handleCheat = () => {
       if (!currentLevel) return;
       const step = currentLevel.steps[currentStepIndex];
-      // Clean the instruction: remove phrases like "Tell me to...", "Ask me to..." etc.
-      // A simple heuristic: extract the part inside single or double quotes if present.
-      // Or just take the 'hint' field which is usually cleaner? 
-      // Looking at constants.ts, 'hint' is usually "Try typing: 'Import pygame for me'" or "x = 100".
-      // Actually, the 'hint' field in constants.ts often contains the exact code or prompt we want users to type.
-      // Let's try to extract content from quotes in the 'hint' or 'instruction'.
       
       const instruction = step.instruction;
       const hint = step.hint;
@@ -253,14 +278,11 @@ export default function App() {
           return;
       }
       
-      // Heuristic 2: If hint contains "Try typing: ..." or "Say: ...", remove that prefix.
-      // But often the hint itself is the code snippet or prompt.
-      // Let's just use the hint text directly but clean it up if it has a prefix.
+      // Heuristic 2: Clean up hint
       let cleanHint = hint;
       if (cleanHint.includes(":")) {
           cleanHint = cleanHint.split(":")[1].trim();
       }
-      // Remove quotes if they wrap the whole hint
       if ((cleanHint.startsWith('"') && cleanHint.endsWith('"')) || (cleanHint.startsWith("'") && cleanHint.endsWith("'"))) {
           cleanHint = cleanHint.slice(1, -1);
       }

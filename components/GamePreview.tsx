@@ -1,8 +1,20 @@
+
 import React, { useEffect, useRef, useState } from 'react';
 import { Maximize2, Minimize2, Eye, Target, Image as ImageIcon, CheckCircle } from 'lucide-react';
 
+interface DrawingCommand {
+    type: 'fill' | 'circle' | 'rect' | 'text' | 'clear';
+    color?: string;
+    x?: number;
+    y?: number;
+    radius?: number;
+    width?: number;
+    height?: number;
+    text?: string;
+}
+
 interface GamePreviewProps {
-  visualState: string[]; // List of accumulated actions
+  visualState: DrawingCommand[][]; // List of command batches
   texts: any;
   targetImage?: string;
   isMaximized: boolean;
@@ -35,58 +47,76 @@ const GamePreview: React.FC<GamePreviewProps> = ({ visualState, texts, targetIma
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Reset Canvas
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
     // Default background (Simulate uninitialized screen)
-    ctx.fillStyle = '#333';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#666';
-    ctx.font = '20px "Fredoka", sans-serif'; // Use app font for better Chinese rendering support
-    ctx.textAlign = 'center';
-    ctx.fillText(texts.osNotLoaded, canvas.width / 2, canvas.height / 2);
+    // If no history, show "OS Not Loaded"
+    if (visualState.length === 0) {
+        ctx.fillStyle = '#333';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#666';
+        ctx.font = '20px "Fredoka", sans-serif'; 
+        ctx.textAlign = 'center';
+        ctx.fillText(texts.osNotLoaded, canvas.width / 2, canvas.height / 2);
+        return;
+    }
 
     // Replay history to build current state
-    visualState.forEach(action => {
-      switch (action) {
-        case 'CREATE_SCREEN':
-          // Simulate window creation (just clears the "Not Loaded" text)
-          ctx.fillStyle = '#1a1a1a'; // Dark grey default
+    // We only render the LATEST batch of commands for the current frame usually, 
+    // but to persist state we might need to replay or assume the latest batch is the full frame.
+    // For simplicity in this Vibe Coding context, let's assume the latest execution returns the full desired state 
+    // OR we clear and redraw based on the latest successful run.
+    // Let's try rendering just the latest batch to simulate "current frame".
+    
+    const latestCommands = visualState[visualState.length - 1] || [];
+    
+    console.log('[GamePreview] Latest commands:', latestCommands);
+    console.log('[GamePreview] Full visualState:', visualState);
+
+    // Clear canvas before drawing new frame
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Default to black background, but it will be overridden by 'fill' command if present
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    latestCommands.forEach((cmd, index) => {
+      console.log(`[GamePreview] Processing command ${index}:`, cmd);
+      
+      switch (cmd.type) {
+        case 'fill':
+          // Use the exact color provided by the LLM
+          // Ensure fallback to valid black if color is missing/invalid, but prioritize cmd.color
+          let fillColor = cmd.color;
+          if (!fillColor || fillColor === 'undefined') fillColor = '#000000';
+          
+          console.log(`[GamePreview] Filling with color: ${fillColor} (Original: ${cmd.color})`);
+          ctx.fillStyle = fillColor;
           ctx.fillRect(0, 0, canvas.width, canvas.height);
           break;
           
-        case 'FILL_BLACK':
-          ctx.fillStyle = '#000000';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        case 'circle':
+          ctx.fillStyle = cmd.color || '#FFFFFF';
+          ctx.strokeStyle = cmd.color || '#FFFFFF';
+          if (cmd.x !== undefined && cmd.y !== undefined && cmd.radius !== undefined) {
+              ctx.beginPath();
+              ctx.arc(cmd.x, cmd.y, cmd.radius, 0, Math.PI * 2);
+              ctx.fill();
+          }
           break;
 
-        case 'FILL_RED':
-            ctx.fillStyle = '#FF0000';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        case 'rect':
+            if (cmd.x !== undefined && cmd.y !== undefined && cmd.width !== undefined && cmd.height !== undefined) {
+                ctx.fillRect(cmd.x, cmd.y, cmd.width, cmd.height);
+            }
+            break;
+        
+        case 'text':
+            if (cmd.x !== undefined && cmd.y !== undefined && cmd.text) {
+                ctx.font = '20px "Fredoka", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(cmd.text, cmd.x, cmd.y);
+            }
             break;
 
-        case 'DRAW_HERO':
-          ctx.fillStyle = '#0000FF'; // Blue hero
-          ctx.beginPath();
-          ctx.arc(canvas.width / 2, canvas.height / 2, 30, 0, Math.PI * 2);
-          ctx.fill();
-          
-          // Add a glow effect
-          ctx.shadowBlur = 20;
-          ctx.shadowColor = "blue";
-          ctx.stroke();
-          ctx.shadowBlur = 0;
-          break;
-
-        case 'DRAW_HERO_MOVED':
-            // Draw hero at new position (simulated)
-            ctx.fillStyle = '#0000FF';
-            ctx.beginPath();
-            ctx.arc(150, 100, 30, 0, Math.PI * 2); // Hardcoded visual for demo
-            ctx.fill();
-            break;
-          
-        // Add more visual cases here as needed
         default:
             break;
       }
