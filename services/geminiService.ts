@@ -2,84 +2,118 @@ import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { Level, LevelStep, Language } from "../types";
 
 // Helper to get client (assumes process.env.API_KEY is available)
-// UPDATED: Now supports Custom Base URL for third-party providers
+// UPDATED: Now supports Custom Base URL for third-party providers (specifically OpenAI-compatible ones)
 const getGenAI = () => {
   const apiKey = process.env.API_KEY;
-  const baseUrl = process.env.GEMINI_BASE_URL;
   
   if (!apiKey) {
     console.error("API_KEY is missing!");
     throw new Error("API Key is missing");
   }
-
-  const config: any = { apiKey };
-  if (baseUrl) {
-    // If using a third-party provider, we might need to adjust how the SDK is initialized.
-    // However, the official SDK might not support custom baseUrl easily in the constructor.
-    // For maximum compatibility with 3rd party OpenAI-compatible or Google-compatible endpoints,
-    // we rely on the SDK's capability if it exists, otherwise we might need a fetch-based fallback.
-    // Note: The specific @google/genai SDK version behavior regarding baseUrl needs to be checked.
-    // Assuming standard GoogleGenAI usage for now. If 3rd party provider mimics Google exactly, this might work if they intercept DNS or use a proxy.
-    // But usually, SDKs need an endpoint config.
-    //
-    // HACK: Attempt to inject baseUrl if the SDK supports it in constructor options (it often doesn't publicly).
-    // If the user is using a proxy that requires a different endpoint, the SDK might fail.
-    //
-    // A more robust way for 3rd party APIs is to use fetch directly, but let's try to pass it if supported
-    // or rely on the user environment.
-    // 
-    // Re-reading user request: "not model is gemini-2.5-flash".
-    // If the SDK fails to connect to a custom endpoint, we might need to rewrite this service to use fetch().
-  }
-  
-  // For now, we initialize standard SDK. If this fails with custom URL requirements, we will switch to fetch.
   return new GoogleGenAI({ apiKey });
 };
 
-// ... rest of the file (we will rewrite the API calls to use fetch for custom base url support)
-
-// Since we need to support custom Base URL which the SDK might not expose easily, 
-// we will implement a direct REST call helper.
-
+/**
+ * Calls the API. If GEMINI_BASE_URL is set, it assumes an OpenAI-compatible interface
+ * (which is common for "AI Hubs" like Zeabur AI Hub / LiteLLM).
+ * Otherwise, it defaults to the official Google Gemini REST API.
+ */
 const callGeminiAPI = async (
     model: string, 
     payload: any,
     schema?: Schema
 ) => {
     const apiKey = process.env.API_KEY;
-    // Default to official Google API if no base URL provided
     // Remove trailing slash if present
-    let baseUrl = (process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com').replace(/\/$/, '');
+    let baseUrl = (process.env.GEMINI_BASE_URL || '').replace(/\/$/, '');
     
-    // Construct URL
-    // Pattern: https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent
-    const url = `${baseUrl}/v1beta/models/${model}:generateContent?key=${apiKey}`;
-    
-    const body: any = {
-        contents: payload.contents,
-        systemInstruction: payload.systemInstruction ? { parts: [{ text: payload.systemInstruction }] } : undefined,
-        generationConfig: {
-            // responseMimeType: schema ? "application/json" : "text/plain",
-             responseMimeType: "application/json", // Always JSON for this app's logic
-             responseSchema: schema
-        }
-    };
+    // STRATEGY DETECTION:
+    // If baseUrl is present, we assume OpenAI-compatible API (LiteLLM / Zeabur AI Hub).
+    // If baseUrl is empty, we use Google Official API.
+    const isOpenAICompatible = !!baseUrl;
 
-    // If no schema is provided, we might want text/plain, but our app logic heavily relies on JSON structure.
-    if (!schema) {
-        delete body.generationConfig.responseSchema;
-        // Keep application/json mime type if we want JSON output, or remove for text.
-        // For explainPythonError, we expect text.
-        body.generationConfig.responseMimeType = "text/plain";
+    let url = '';
+    let body: any = {};
+
+    if (isOpenAICompatible) {
+        // --- OPENAI COMPATIBLE MODE (Zeabur AI Hub / LiteLLM) ---
+        // Endpoint: /v1/chat/completions
+        url = `${baseUrl}/v1/chat/completions`;
+
+        // Map 'contents' (Google) to 'messages' (OpenAI)
+        const messages = [];
+        
+        // Add system instruction if present
+        if (payload.systemInstruction) {
+            messages.push({ role: 'system', content: payload.systemInstruction });
+        }
+
+        // Map chat history and user input
+        if (payload.contents) {
+            payload.contents.forEach((content: any) => {
+                const role = content.role === 'model' ? 'assistant' : content.role;
+                const text = content.parts?.[0]?.text || '';
+                messages.push({ role, content: text });
+            });
+        }
+
+        body = {
+            model: model, // Pass the model name as is (e.g. 'gemini-2.5-flash')
+            messages: messages,
+            temperature: 0.7
+        };
+
+        // JSON Mode for OpenAI
+        if (schema) {
+            body.response_format = { type: "json_object" };
+            // Important: OpenAI requires the word "JSON" in the prompt when using json_object mode.
+            // We append a subtle reminder to the system prompt if it's not there.
+            if (!messages.some(m => m.role === 'system' && m.content.includes('JSON'))) {
+                 if (messages.length > 0 && messages[0].role === 'system') {
+                     messages[0].content += " You MUST respond with valid JSON.";
+                 } else {
+                     messages.unshift({ role: 'system', content: "You MUST respond with valid JSON." });
+                 }
+            }
+        }
+
+    } else {
+        // --- GOOGLE OFFICIAL MODE ---
+        // Endpoint: https://generativelanguage.googleapis.com/v1beta/models/...
+        baseUrl = 'https://generativelanguage.googleapis.com';
+        url = `${baseUrl}/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        
+        body = {
+            contents: payload.contents,
+            systemInstruction: payload.systemInstruction ? { parts: [{ text: payload.systemInstruction }] } : undefined,
+            generationConfig: {
+                 responseMimeType: "application/json", 
+                 responseSchema: schema
+            }
+        };
+
+        if (!schema) {
+            delete body.generationConfig.responseSchema;
+            body.generationConfig.responseMimeType = "text/plain";
+        }
     }
 
     try {
+        console.log(`[Gemini Service] Mode: ${isOpenAICompatible ? 'OpenAI-Compatible' : 'Google Native'}`);
         console.log(`[Gemini Service] Calling URL: ${url.replace(apiKey || '', '***')}`);
+        
+        const headers: any = {
+            'Content-Type': 'application/json'
+        };
+
+        // For OpenAI compatible endpoints, usually Bearer token is used
+        if (isOpenAICompatible) {
+            headers['Authorization'] = `Bearer ${apiKey}`;
+        }
+
         const response = await fetch(url, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
+            headers: headers,
             body: JSON.stringify(body)
         });
 
@@ -91,10 +125,18 @@ const callGeminiAPI = async (
 
         const data = await response.json();
         
-        // Parse response to match SDK structure roughly or just return text
-        // SDK response.text() usually gets candidates[0].content.parts[0].text
-        if (data.candidates && data.candidates.length > 0 && data.candidates[0].content.parts.length > 0) {
-            return data.candidates[0].content.parts[0].text;
+        if (isOpenAICompatible) {
+            // Parse OpenAI format
+            // choices[0].message.content
+            if (data.choices && data.choices.length > 0 && data.choices[0].message) {
+                return data.choices[0].message.content;
+            }
+        } else {
+            // Parse Google format
+            // candidates[0].content.parts[0].text
+            if (data.candidates && data.candidates.length > 0 && data.candidates[0].content.parts.length > 0) {
+                return data.candidates[0].content.parts[0].text;
+            }
         }
         
         return null;
