@@ -7,7 +7,8 @@ import { getTranslation } from './i18n';
 import LevelMap from './components/LevelMap';
 import GamePreview from './components/GamePreview';
 import CodeEditor from './components/CodeEditor';
-import { Send, ArrowLeft, RotateCcw, CheckCircle, Sparkles, Star, Globe, Mic, Volume2, Trophy, Terminal as TerminalIcon, Monitor } from 'lucide-react';
+import TutorialOverlay from './components/TutorialOverlay'; // Import the new component
+import { Send, ArrowLeft, RotateCcw, CheckCircle, Sparkles, Star, Globe, Mic, Volume2, Trophy, Terminal as TerminalIcon, Monitor, HelpCircle, Wand2 } from 'lucide-react'; // Added HelpCircle, Wand2
 
 export default function App() {
   const [language, setLanguage] = useState<Language>('zh');
@@ -30,6 +31,9 @@ export default function App() {
   // UI State
   const [isGameMaximized, setIsGameMaximized] = useState(false);
   
+  // Tutorial/Onboarding State
+  const [showTutorial, setShowTutorial] = useState(false);
+
   // Execution State
   const [isRunningCode, setIsRunningCode] = useState(false);
   const [consoleOutput, setConsoleOutput] = useState('');
@@ -136,6 +140,12 @@ export default function App() {
     setIsGameMaximized(false);
     setGuideFocus('INPUT'); // Start with focus on input
     
+    // Show tutorial for the first level of the first world if not already completed (checking localStorage or just simple logic for now)
+    // For simplicity, let's show it if it's the very first interaction or specific level.
+    // Or just show it every time a level starts for "onboarding" feel if needed, but better to track.
+    // Let's just show it for now.
+    setShowTutorial(true);
+
     // Initial Tutor Message
     const initialText = `${t.initialGreeting('VibeBot', level.title)} \n\n${t.firstTask} ${level.steps[0].instruction}`;
     const initialMsg: ChatMessage = {
@@ -223,8 +233,58 @@ export default function App() {
       }
   };
 
+  const handleCheat = () => {
+      if (!currentLevel) return;
+      const step = currentLevel.steps[currentStepIndex];
+      // Clean the instruction: remove phrases like "Tell me to...", "Ask me to..." etc.
+      // A simple heuristic: extract the part inside single or double quotes if present.
+      // Or just take the 'hint' field which is usually cleaner? 
+      // Looking at constants.ts, 'hint' is usually "Try typing: 'Import pygame for me'" or "x = 100".
+      // Actually, the 'hint' field in constants.ts often contains the exact code or prompt we want users to type.
+      // Let's try to extract content from quotes in the 'hint' or 'instruction'.
+      
+      const instruction = step.instruction;
+      const hint = step.hint;
+      
+      // Heuristic 1: Look for text inside quotes in instruction or hint
+      const quoteMatch = instruction.match(/['"](.*?)['"]/);
+      if (quoteMatch) {
+          setInput(quoteMatch[1]);
+          return;
+      }
+      
+      // Heuristic 2: If hint contains "Try typing: ..." or "Say: ...", remove that prefix.
+      // But often the hint itself is the code snippet or prompt.
+      // Let's just use the hint text directly but clean it up if it has a prefix.
+      let cleanHint = hint;
+      if (cleanHint.includes(":")) {
+          cleanHint = cleanHint.split(":")[1].trim();
+      }
+      // Remove quotes if they wrap the whole hint
+      if ((cleanHint.startsWith('"') && cleanHint.endsWith('"')) || (cleanHint.startsWith("'") && cleanHint.endsWith("'"))) {
+          cleanHint = cleanHint.slice(1, -1);
+      }
+      
+      setInput(cleanHint);
+  }
+
   const handleSendMessage = async () => {
     if (!input.trim() || !currentLevel || isLoading) return;
+
+    // Check for special "Help me run" command
+    if (input.trim() === t.helpRun || input.trim().toLowerCase() === 'run' || input.trim().toLowerCase() === 'help me run' || input.trim() === '帮我运行') {
+        // Directly trigger run logic
+        handleRunCode();
+        // Add a user message to chat to show what happened
+        const userMsg: ChatMessage = {
+            id: Date.now().toString(),
+            role: 'user',
+            text: input
+        };
+        setChatHistory(prev => [...prev, userMsg]);
+        setInput('');
+        return;
+    }
 
     const userMsg: ChatMessage = {
       id: Date.now().toString(),
@@ -332,6 +392,11 @@ export default function App() {
   // PLAYING STATE
   return (
     <div className="h-screen bg-dark flex flex-col overflow-hidden relative">
+      
+      {/* New Tutorial Overlay */}
+      {showTutorial && (
+          <TutorialOverlay onClose={() => setShowTutorial(false)} texts={t} />
+      )}
         
       {/* Fullscreen Overlay for Game Preview */}
       {isGameMaximized && (
@@ -511,7 +576,9 @@ export default function App() {
 
             {/* Hint Box */}
             {!isLevelFinished && (
-                <div className={`px-4 py-3 bg-gray-800/30 border-t border-gray-800 transition-all duration-300 ${
+                <div 
+                    onClick={handleCheat}
+                    className={`px-4 py-3 bg-gray-800/30 border-t border-gray-800 transition-all duration-300 cursor-pointer hover:bg-gray-800/50 ${
                     guideFocus === 'RUN' 
                         ? 'bg-yellow-500/10 animate-pulse' 
                         : guideFocus === 'INPUT' 
@@ -553,6 +620,15 @@ export default function App() {
                             <Send className="w-4 h-4" />
                         </button>
                     </div>
+
+                    {/* Cheat Button */}
+                    <button 
+                        onClick={handleCheat}
+                        className="p-3 rounded-xl border border-gray-700 bg-gray-800 text-yellow-500 hover:text-yellow-400 hover:border-yellow-500/50 transition-all duration-300"
+                        title={t.cheat}
+                    >
+                        <Wand2 className="w-5 h-5" />
+                    </button>
 
                     <button 
                         onClick={toggleListening}

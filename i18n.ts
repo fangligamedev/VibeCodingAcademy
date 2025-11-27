@@ -53,7 +53,14 @@ export const TRANSLATIONS = {
     initialGreeting: (botName: string, title: string) => `Hi! I'm ${botName} 🤖. Welcome to ${title}!`,
     firstTask: "Our first task:",
     nextStep: "Awesome! Next step:",
-    pythonCommentHeader: "# Python Vibe Coding Environment v1.0\n# Type your code here or ask VibeBot...\n"
+    pythonCommentHeader: "# Python Vibe Coding Environment v1.0\n# Type your code here or ask VibeBot...\n",
+    cheat: "Cheat Hint",
+    helpRun: "Help me run",
+    tutorialTitle: "Welcome to Vibe Coding!",
+    tutorialStep1: "Here, you don't write complicated code yourself.",
+    tutorialStep2: "You serve as the Commander, telling the AI what to do!",
+    tutorialStep3: "Try typing: 'Help me import the library' or 'Draw a red circle'.",
+    tutorialStart: "I'm Ready! Let's Rock! 🚀"
   },
   zh: {
     appTitle: "VibeCoder 编程学院",
@@ -106,7 +113,14 @@ export const TRANSLATIONS = {
     initialGreeting: (botName: string, title: string) => `嗨！我是 ${botName} 🤖。欢迎来到 ${title}！`,
     firstTask: "我们的第一个任务：",
     nextStep: "太棒了！下一步：",
-    pythonCommentHeader: "# Python Vibe Coding 环境 v1.0\n# 在这里输入代码或询问 VibeBot...\n"
+    pythonCommentHeader: "# Python Vibe Coding 环境 v1.0\n# 在这里输入代码或询问 VibeBot...\n",
+    cheat: "作弊提示",
+    helpRun: "帮我运行",
+    tutorialTitle: "欢迎来到 Vibe Coding 世界！",
+    tutorialStep1: "在这里，你不需要自己写复杂的代码。",
+    tutorialStep2: "你是指挥官，告诉 AI 你想要什么！",
+    tutorialStep3: "试着输入：'帮我导入库' 或 '画一个红色的圆'。",
+    tutorialStart: "准备好了！开始行动！🚀"
   }
 };
 
